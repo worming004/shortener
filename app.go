@@ -6,14 +6,11 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
-
-var db *sql.DB
 
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -25,7 +22,25 @@ func generateCode(n int) string {
 	return string(b)
 }
 
-func shortenHandler(w http.ResponseWriter, r *http.Request) {
+// App holds the application dependencies.
+type App struct {
+	db *sql.DB
+}
+
+// NewApp creates an App with the given database connection.
+func NewApp(db *sql.DB) *App {
+	return &App{db: db}
+}
+
+// Handler returns an http.Handler with all routes registered.
+func (a *App) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/shorten", a.shortenHandler)
+	mux.HandleFunc("/", a.redirectHandler)
+	return mux
+}
+
+func (a *App) shortenHandler(w http.ResponseWriter, r *http.Request) {
 	urlValue := r.URL.Query().Get("url")
 	if urlValue == "" {
 		http.Error(w, "Missing url parameter", http.StatusBadRequest)
@@ -36,13 +51,12 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("adding https prefix")
 		urlValue = "https://" + urlValue
 	}
-	urlEncoded := url.QueryEscape(urlValue)
 
 	code := generateCode(8)
 
-	_, err := db.Exec(
+	_, err := a.db.Exec(
 		"INSERT INTO short_urls (code, original_url, created_at) VALUES (?, ?, ?)",
-		code, urlEncoded, time.Now(),
+		code, urlValue, time.Now(),
 	)
 
 	if err != nil {
@@ -55,30 +69,30 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(code))
 }
 
-func redirectHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) redirectHandler(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Path[1:]
 
-	var url string
-	err := db.QueryRow(
+	var originalURL string
+	err := a.db.QueryRow(
 		"SELECT original_url FROM short_urls WHERE code = ?",
 		code,
-	).Scan(&url)
+	).Scan(&originalURL)
 
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	log.Printf("redirect for code %v, url: %v", code, url)
+	log.Printf("redirect for code %v, url: %v", code, originalURL)
 
-	http.Redirect(w, r, url, http.StatusFound)
+	http.Redirect(w, r, originalURL, http.StatusFound)
 }
 
-func cleanupWorker() {
+func (a *App) cleanupWorker() {
 	for {
 		time.Sleep(10 * time.Hour * 24)
 
-		_, err := db.Exec(`
+		_, err := a.db.Exec(`
 			DELETE FROM short_urls
 			WHERE created_at < datetime('now', '-3 years')
 		`)
@@ -91,19 +105,9 @@ func cleanupWorker() {
 	}
 }
 
-func main() {
-	var port string
-	flag.StringVar(&port, "port", "8080", "port to bind the server to")
-	flag.Parse()
-
-	var err error
-	db, err = sql.Open("sqlite3", "./shortener.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Create table if not exists
-	_, err = db.Exec(`
+// initDB creates the required schema in db if it does not exist yet.
+func initDB(db *sql.DB) error {
+	_, err := db.Exec(`
 	CREATE TABLE IF NOT EXISTS short_urls (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		code TEXT UNIQUE,
@@ -111,18 +115,29 @@ func main() {
 		created_at DATETIME
 	);
 	`)
+	return err
+}
+
+func main() {
+	var port string
+	flag.StringVar(&port, "port", "8080", "port to bind the server to")
+	flag.Parse()
+
+	db, err := sql.Open("sqlite3", "./shortener.db")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Start cleanup worker
-	go cleanupWorker()
+	if err := initDB(db); err != nil {
+		log.Fatal(err)
+	}
 
-	// HTTP handlers
-	http.HandleFunc("/shorten", shortenHandler)
-	http.HandleFunc("/", redirectHandler)
+	app := NewApp(db)
+
+	// Start cleanup worker
+	go app.cleanupWorker()
 
 	addr := ":" + port
 	log.Println("Server running on", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	log.Fatal(http.ListenAndServe(addr, app.Handler()))
 }
