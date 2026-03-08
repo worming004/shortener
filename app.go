@@ -187,9 +187,6 @@ func main() {
 	}
 
 	app := NewApp(db)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	err = app.Setup()
 	if err != nil {
