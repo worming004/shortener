@@ -42,6 +42,8 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("generate url with code %v", code)
+
 	w.Write([]byte(code))
 }
 
@@ -58,6 +60,8 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	log.Printf("redirect for code %v", code)
 
 	http.Redirect(w, r, url, http.StatusFound)
 }
