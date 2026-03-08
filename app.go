@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -28,6 +29,11 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	if url == "" {
 		http.Error(w, "Missing url parameter", http.StatusBadRequest)
 		return
+	}
+
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		log.Println("adding https prefix")
+		url = "https://" + url
 	}
 
 	code := generateCode(8)
@@ -61,14 +67,14 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("redirect for code %v", code)
+	log.Printf("redirect for code %v, url: %v", code, url)
 
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
 func cleanupWorker() {
 	for {
-		time.Sleep(24 * time.Hour)
+		time.Sleep(10 * time.Hour * 24)
 
 		_, err := db.Exec(`
 			DELETE FROM short_urls
