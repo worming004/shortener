@@ -50,13 +50,13 @@ func generateCode(n int) string {
 // characters) and returns a properly encoded URL where spaces in the query
 // string are represented as '%20' instead of '+'.
 func normalizeURL(rawURL string) string {
-	qIdx := strings.IndexByte(rawURL, '?')
-	if qIdx == -1 {
+	before, after, ok := strings.Cut(rawURL, "?")
+	if !ok {
 		return rawURL
 	}
 
-	base := rawURL[:qIdx]
-	rawQuery := rawURL[qIdx+1:]
+	base := before
+	rawQuery := after
 
 	// url.ParseQuery decodes '+' as space and '%XX' as the corresponding
 	// character (e.g. '%2B' becomes a literal '+').
