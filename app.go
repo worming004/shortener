@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"log"
 	"math/rand"
 	"net/http"
@@ -79,6 +80,10 @@ func cleanupWorker() {
 }
 
 func main() {
+	var port string
+	flag.StringVar(&port, "port", "8080", "port to bind the server to")
+	flag.Parse()
+
 	var err error
 	db, err = sql.Open("sqlite3", "./shortener.db")
 	if err != nil {
@@ -105,6 +110,7 @@ func main() {
 	http.HandleFunc("/shorten", shortenHandler)
 	http.HandleFunc("/", redirectHandler)
 
-	log.Println("Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	addr := ":" + port
+	log.Println("Server running on", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
