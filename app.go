@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,24 +26,84 @@ func generateCode(n int) string {
 	return string(b)
 }
 
+// normalizeURL takes a raw URL string (as received verbatim from the request's
+// query parameter, where '+' encodes a space and '%XX' are percent-encoded
+// characters) and returns a properly encoded URL where spaces in the query
+// string are represented as '%20' instead of '+'.
+func normalizeURL(rawURL string) string {
+	qIdx := strings.IndexByte(rawURL, '?')
+	if qIdx == -1 {
+		return rawURL
+	}
+
+	base := rawURL[:qIdx]
+	rawQuery := rawURL[qIdx+1:]
+
+	// url.ParseQuery decodes '+' as space and '%XX' as the corresponding
+	// character (e.g. '%2B' becomes a literal '+').
+	params, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return rawURL
+	}
+
+	// Re-encode each key and value: url.QueryEscape encodes spaces as '+',
+	// so we replace those '+' with '%20'. Literal '+' characters are encoded
+	// as '%2B' by url.QueryEscape and are therefore unaffected by the replace.
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(params))
+	for _, k := range keys {
+		ek := strings.ReplaceAll(url.QueryEscape(k), "+", "%20")
+		for _, v := range params[k] {
+			ev := strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
+			parts = append(parts, ek+"="+ev)
+		}
+	}
+
+	if len(parts) == 0 {
+		return base
+	}
+	return base + "?" + strings.Join(parts, "&")
+}
+
 func shortenHandler(w http.ResponseWriter, r *http.Request) {
-	urlValue := r.URL.Query().Get("url")
-	if urlValue == "" {
+	// Read the raw value of the 'url' parameter directly from the query string
+	// so that '+' characters (which encode spaces in query params) are preserved
+	// and handled explicitly by normalizeURL, rather than being silently decoded
+	// to spaces by url.Values.Get().
+	rawURLValue := ""
+	rawQuery := r.URL.RawQuery
+	for rawQuery != "" {
+		var part string
+		part, rawQuery, _ = strings.Cut(rawQuery, "&")
+		k, v, ok := strings.Cut(part, "=")
+		if ok && k == "url" {
+			rawURLValue = v
+			break
+		}
+	}
+
+	if rawURLValue == "" {
 		http.Error(w, "Missing url parameter", http.StatusBadRequest)
 		return
 	}
 
-	if !strings.HasPrefix(urlValue, "http://") && !strings.HasPrefix(urlValue, "https://") {
+	if !strings.HasPrefix(rawURLValue, "http://") && !strings.HasPrefix(rawURLValue, "https://") {
 		log.Println("adding https prefix")
-		urlValue = "https://" + urlValue
+		rawURLValue = "https://" + rawURLValue
 	}
-	urlEncoded := url.QueryEscape(urlValue)
+
+	normalizedURL := normalizeURL(rawURLValue)
 
 	code := generateCode(8)
 
 	_, err := db.Exec(
 		"INSERT INTO short_urls (code, original_url, created_at) VALUES (?, ?, ?)",
-		code, urlEncoded, time.Now(),
+		code, normalizedURL, time.Now(),
 	)
 
 	if err != nil {
