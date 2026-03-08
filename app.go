@@ -14,9 +14,28 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var db *sql.DB
-
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+type App struct {
+	db *sql.DB
+}
+
+func NewApp(db *sql.DB) *App {
+	return &App{db}
+}
+
+func (app *App) Setup() error {
+	// Create table if not exists
+	_, err := app.db.Exec(`
+	CREATE TABLE IF NOT EXISTS short_urls (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		code TEXT UNIQUE,
+		original_url TEXT NOT NULL,
+		created_at DATETIME
+	);
+	`)
+	return err
+}
 
 func generateCode(n int) string {
 	b := make([]byte, n)
@@ -71,7 +90,7 @@ func normalizeURL(rawURL string) string {
 	return base + "?" + strings.Join(parts, "&")
 }
 
-func shortenHandler(w http.ResponseWriter, r *http.Request) {
+func (app *App) shortenHandler(w http.ResponseWriter, r *http.Request) {
 	// Use the decoded query to check for a missing parameter; url.Values.Get
 	// handles percent-encoded parameter names (e.g. "ur%6C") transparently.
 	if r.URL.Query().Get("url") == "" {
@@ -105,7 +124,7 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 
 	code := generateCode(8)
 
-	_, err := db.Exec(
+	_, err := app.db.Exec(
 		"INSERT INTO short_urls (code, original_url, created_at) VALUES (?, ?, ?)",
 		code, normalizedURL, time.Now(),
 	)
@@ -120,11 +139,11 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(code))
 }
 
-func redirectHandler(w http.ResponseWriter, r *http.Request) {
+func (app *App) redirectHandler(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Path[1:]
 
 	var url string
-	err := db.QueryRow(
+	err := app.db.QueryRow(
 		"SELECT original_url FROM short_urls WHERE code = ?",
 		code,
 	).Scan(&url)
@@ -139,11 +158,11 @@ func redirectHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
-func cleanupWorker() {
+func (app *App) cleanupWorker() {
 	for {
 		time.Sleep(10 * time.Hour * 24)
 
-		_, err := db.Exec(`
+		_, err := app.db.Exec(`
 			DELETE FROM short_urls
 			WHERE created_at < datetime('now', '-3 years')
 		`)
@@ -162,30 +181,27 @@ func main() {
 	flag.Parse()
 
 	var err error
-	db, err = sql.Open("sqlite3", "./shortener.db")
+	db, err := sql.Open("sqlite3", "./shortener.db")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Create table if not exists
-	_, err = db.Exec(`
-	CREATE TABLE IF NOT EXISTS short_urls (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		code TEXT UNIQUE,
-		original_url TEXT NOT NULL,
-		created_at DATETIME
-	);
-	`)
+	app := NewApp(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = app.Setup()
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Start cleanup worker
-	go cleanupWorker()
+	go app.cleanupWorker()
 
 	// HTTP handlers
-	http.HandleFunc("/shorten", shortenHandler)
-	http.HandleFunc("/", redirectHandler)
+	http.HandleFunc("/shorten", app.shortenHandler)
+	http.HandleFunc("/", app.redirectHandler)
 
 	addr := ":" + port
 	log.Println("Server running on", addr)

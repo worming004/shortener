@@ -37,7 +37,7 @@ func TestNormalizeURL(t *testing.T) {
 			want:  "https://example.com?price=%240.96%2B%241.00",
 		},
 		{
-			name: "full poker hand URL from issue report",
+			name:  "full poker hand URL from issue report",
 			input: "https://handreplayer.poker.craftlabit.be?hand=PokerStars+Hand+%23256159580493%3A+Zoom+Tournament+%233889643742%2C+%240.96%2B%241.00%2B%240.24+USD+Hold%27em+No+Limit+-+Level+IV+%2830%2F60%29",
 			want:  "https://handreplayer.poker.craftlabit.be?hand=PokerStars%20Hand%20%23256159580493%3A%20Zoom%20Tournament%20%233889643742%2C%20%240.96%2B%241.00%2B%240.24%20USD%20Hold%27em%20No%20Limit%20-%20Level%20IV%20%2830%2F60%29",
 		},
@@ -68,10 +68,10 @@ func TestNormalizeURL(t *testing.T) {
 	}
 }
 
-func setupTestDB(t *testing.T) {
+func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	var err error
-	db, err = sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open in-memory db: %v", err)
 	}
@@ -87,10 +87,12 @@ func setupTestDB(t *testing.T) {
 		t.Fatalf("create table: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	return db
 }
 
 func TestShortenAndRedirect_EncodedURL(t *testing.T) {
-	setupTestDB(t)
+	db := setupTestDB(t)
+	app := NewApp(db)
 
 	// The URL to shorten uses '+' for spaces and '%XX' for special chars,
 	// as it would arrive verbatim in the shortener request's query string.
@@ -99,7 +101,7 @@ func TestShortenAndRedirect_EncodedURL(t *testing.T) {
 	// Step 1: shorten
 	shortenReq := httptest.NewRequest(http.MethodGet, "/shorten?url="+rawParam, nil)
 	shortenRec := httptest.NewRecorder()
-	shortenHandler(shortenRec, shortenReq)
+	app.shortenHandler(shortenRec, shortenReq)
 
 	if shortenRec.Code != http.StatusOK {
 		t.Fatalf("shorten: expected 200, got %d", shortenRec.Code)
@@ -112,7 +114,7 @@ func TestShortenAndRedirect_EncodedURL(t *testing.T) {
 	// Step 2: redirect
 	redirectReq := httptest.NewRequest(http.MethodGet, "/"+code, nil)
 	redirectRec := httptest.NewRecorder()
-	redirectHandler(redirectRec, redirectReq)
+	app.redirectHandler(redirectRec, redirectReq)
 
 	if redirectRec.Code != http.StatusFound {
 		t.Fatalf("redirect: expected 302, got %d", redirectRec.Code)
@@ -148,11 +150,12 @@ func TestShortenAndRedirect_EncodedURL(t *testing.T) {
 }
 
 func TestShortenHandler_MissingParam(t *testing.T) {
-	setupTestDB(t)
+	db := setupTestDB(t)
+	app := NewApp(db)
 
 	req := httptest.NewRequest(http.MethodGet, "/shorten", nil)
 	rec := httptest.NewRecorder()
-	shortenHandler(rec, req)
+	app.shortenHandler(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
@@ -160,11 +163,12 @@ func TestShortenHandler_MissingParam(t *testing.T) {
 }
 
 func TestShortenHandler_AddsHTTPSPrefix(t *testing.T) {
-	setupTestDB(t)
+	db := setupTestDB(t)
+	app := NewApp(db)
 
 	req := httptest.NewRequest(http.MethodGet, "/shorten?url=example.com%2Fpath", nil)
 	rec := httptest.NewRecorder()
-	shortenHandler(rec, req)
+	app.shortenHandler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -173,7 +177,7 @@ func TestShortenHandler_AddsHTTPSPrefix(t *testing.T) {
 
 	redirectReq := httptest.NewRequest(http.MethodGet, "/"+code, nil)
 	redirectRec := httptest.NewRecorder()
-	redirectHandler(redirectRec, redirectReq)
+	app.redirectHandler(redirectRec, redirectReq)
 
 	location := redirectRec.Header().Get("Location")
 	if !strings.HasPrefix(location, "https://") {
