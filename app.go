@@ -43,6 +43,7 @@ func normalizeURL(rawURL string) string {
 	// character (e.g. '%2B' becomes a literal '+').
 	params, err := url.ParseQuery(rawQuery)
 	if err != nil {
+		log.Printf("normalizeURL: failed to parse query %q: %v", rawQuery, err)
 		return rawURL
 	}
 
@@ -71,10 +72,18 @@ func normalizeURL(rawURL string) string {
 }
 
 func shortenHandler(w http.ResponseWriter, r *http.Request) {
+	// Use the decoded query to check for a missing parameter; url.Values.Get
+	// handles percent-encoded parameter names (e.g. "ur%6C") transparently.
+	if r.URL.Query().Get("url") == "" {
+		http.Error(w, "Missing url parameter", http.StatusBadRequest)
+		return
+	}
+
 	// Read the raw value of the 'url' parameter directly from the query string
 	// so that '+' characters (which encode spaces in query params) are preserved
 	// and handled explicitly by normalizeURL, rather than being silently decoded
-	// to spaces by url.Values.Get().
+	// to spaces by url.Values.Get(). The parameter name itself is expected to be
+	// the literal ASCII string "url" and will not be percent-encoded in practice.
 	rawURLValue := ""
 	rawQuery := r.URL.RawQuery
 	for rawQuery != "" {
@@ -85,11 +94,6 @@ func shortenHandler(w http.ResponseWriter, r *http.Request) {
 			rawURLValue = v
 			break
 		}
-	}
-
-	if rawURLValue == "" {
-		http.Error(w, "Missing url parameter", http.StatusBadRequest)
-		return
 	}
 
 	if !strings.HasPrefix(rawURLValue, "http://") && !strings.HasPrefix(rawURLValue, "https://") {
