@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -25,22 +26,23 @@ func generateCode(n int) string {
 }
 
 func shortenHandler(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.Query().Get("url")
-	if url == "" {
+	urlValue := r.URL.Query().Get("url")
+	if urlValue == "" {
 		http.Error(w, "Missing url parameter", http.StatusBadRequest)
 		return
 	}
 
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+	if !strings.HasPrefix(urlValue, "http://") && !strings.HasPrefix(urlValue, "https://") {
 		log.Println("adding https prefix")
-		url = "https://" + url
+		urlValue = "https://" + urlValue
 	}
+	urlEncoded := url.QueryEscape(urlValue)
 
 	code := generateCode(8)
 
 	_, err := db.Exec(
 		"INSERT INTO short_urls (code, original_url, created_at) VALUES (?, ?, ?)",
-		code, url, time.Now(),
+		code, urlEncoded, time.Now(),
 	)
 
 	if err != nil {
